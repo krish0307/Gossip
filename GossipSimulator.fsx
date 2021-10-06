@@ -71,12 +71,11 @@ type Tracker(nodes: IActorRef [], topology: string, protocol: string) =
                     printfn "RandNode at start %d " randNode 
                     nodes.[randNode]<!PushSum
         | Terminate (proto,sum,weight)->
-            //TODO:May have to send ratio
             clock.Stop()
             printfn "Time taken for convergence: %O" clock.Elapsed
             if proto="push-sum" then       
                 printfn "For Push-sum:- Sum is %f, Weight is %f, and SumEstimate %.10f" sum weight (sum/weight)
-            // Environment.Exit(0)
+            Environment.Exit(0)
             //TODO:kill logic
         | _ ->()
 
@@ -103,14 +102,16 @@ type Node(neighbours: int [], nodeNum: int) =
             
         | Gossip rumor -> 
             // printfn "val i %d" nodeNum 
-            if rumorCount>=10 then
-                printfn "Calling terminate %d" nodeNum
-                tracker<! Terminate("gossip",0.,0.)
-            else 
+           
+          
                 let randNode = getRandArrElement neighboursForMe
-                // printfn "val i %d and rumorCount %d and randNode %d" nodeNum rumorCount randNode
-                network.[randNode]<! Gossip(rumor)
+                // printfn "val i %d and rumorCount %d and randNode %d network size %d" nodeNum rumorCount randNode network.Length
                 rumorCount<-rumorCount+1
+                if rumorCount>=10 then
+                    printfn "Calling terminate %d" nodeNum
+                    tracker<! Terminate("gossip",0.,0.)
+                else
+                    network.[randNode]<! Gossip(rumor)
         | PushSum  ->
             // let randNode = System.Random().Next(0, neighboursForMe.Length)
             let randNode = getRandArrElement neighboursForMe
@@ -123,7 +124,7 @@ type Node(neighbours: int [], nodeNum: int) =
             let newWeight=weight+w
             let ratioDiff=sum/weight-newSum/newWeight |> abs
             // printfn "val i %f " newWeight 
-            printfn "val i %f " ratioDiff 
+            // printfn "val i %f " ratioDiff 
 
             if ratioDiff<diff then
                 epochCounter<-epochCounter+1
@@ -171,7 +172,7 @@ let rec getNeighbours (id: int) (topology: string) (nodeCount: int) : int [] =
                 let down=getAdjustedNeighbour (id-dimension)
                 let front=getAdjustedNeighbour (id+dimension*dimension)
                 let back=getAdjustedNeighbour (id-dimension*dimension)
-                printfn "id %d left %d right %d top %d down %d front %d back %d " id left right top down front back
+                // printfn "id %d left %d right %d top %d down %d front %d back %d " id left right top down front back
                 neighbourArray<-[|left;right;top;down;front;back|]|> Array.append neighbourArray
         | "imp3d" ->
                 neighbourArray<- getNeighbours id "3d" nodeCount |> Array.append neighbourArray
@@ -194,3 +195,5 @@ let trackerRef = system.ActorOf(Props.Create(typeof<Tracker>, nodeArrayOfActors,
 
 
 trackerRef<! Start
+
+System.Console.ReadLine() |> ignore
