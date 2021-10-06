@@ -19,16 +19,40 @@ type ActionType =
     | Terminate of String * Double * Double
     | SetMaxRumors of int
 
-let nodeCount = int (fsi.CommandLineArgs.[1])
+let nodeCounter = int (fsi.CommandLineArgs.[1])
 let topology = string (fsi.CommandLineArgs.GetValue 2)
 let protocol = string (fsi.CommandLineArgs.GetValue 3)
+
 let diff= 10.0 ** -10.0
+let dimension=int(floor((float nodeCounter) ** (1.0/3.0)))
+let mutable existingNodeSet=nodeCounter
+if topology="3d" || topology="imp3d" then
+    existingNodeSet<-dimension*dimension*dimension
+else
+    existingNodeSet<-nodeCounter
+
+printfn "nodes %d" dimension
+
 let system = ActorSystem.Create("System")
 
 let getRandArrElement =
   let rnd = Random()
   fun (arr : int[]) -> arr.[rnd.Next(arr.Length)]
 
+let getAdjustedNeighbour =
+    fun(id:int) -> 
+        let mutable newNum:int=1
+        if id>existingNodeSet then
+            newNum<-id-existingNodeSet
+        elif id<1 then
+            newNum<-existingNodeSet+id
+        else 
+            newNum<-id
+        newNum
+
+// let num=getAdjustedNeighbour 0                      
+// printfn "%d" num 
+                      
 type Tracker(nodes: IActorRef [], topology: string, protocol: string) =
     inherit Actor()
 
@@ -37,7 +61,7 @@ type Tracker(nodes: IActorRef [], topology: string, protocol: string) =
         | Start -> 
                 for i in 1..nodes.Length-1 do
                     nodes.[i] <! SetUp(nodes,topology,protocol)
-                let randNode = System.Random().Next(1, nodeCount+1)
+                let randNode = System.Random().Next(1, existingNodeSet+1)
                 printfn "Start RadnodeVal %d" randNode
                 if protocol="gossip" then
                     clock.Start()
@@ -52,7 +76,6 @@ type Tracker(nodes: IActorRef [], topology: string, protocol: string) =
             printfn "Time taken for convergence: %O" clock.Elapsed
             if proto="push-sum" then       
                 printfn "For Push-sum:- Sum is %f, Weight is %f, and SumEstimate %.10f" sum weight (sum/weight)
-
             // Environment.Exit(0)
             //TODO:kill logic
         | _ ->()
@@ -79,13 +102,13 @@ type Node(neighbours: int [], nodeNum: int) =
             tracker<- x.Sender
             
         | Gossip rumor -> 
-            // printfn "Creatint acotr"
-            if rumorCount=10 then
-                // printfn "Calling terminate %d" nodeNum
+            // printfn "val i %d" nodeNum 
+            if rumorCount>=10 then
+                printfn "Calling terminate %d" nodeNum
                 tracker<! Terminate("gossip",0.,0.)
             else 
                 let randNode = getRandArrElement neighboursForMe
-                // printfn "val i %d and rumorCount %d" nodeNum rumorCount
+                // printfn "val i %d and rumorCount %d and randNode %d" nodeNum rumorCount randNode
                 network.[randNode]<! Gossip(rumor)
                 rumorCount<-rumorCount+1
         | PushSum  ->
@@ -116,6 +139,13 @@ type Node(neighbours: int [], nodeNum: int) =
 
         | _ -> ()
 
+//--------program start
+
+let nodeArrayOfActors = Array.zeroCreate (existingNodeSet+1)
+let nodeList = [ 1 .. existingNodeSet]
+let mutable numberArray: int [] = [||]//TODO:see if list to array conversion possible
+for i in 1 ..existingNodeSet do
+   numberArray<-[|i|] |>Array.append numberArray
 
 
 let rec getNeighbours (id: int) (topology: string) (nodeCount: int) : int [] =
@@ -123,9 +153,7 @@ let rec getNeighbours (id: int) (topology: string) (nodeCount: int) : int [] =
 
     match topology with
         | "full" ->     
-            for i in 1 ..nodeCount do
-                if i<>id then
-                    neighbourArray<-[|i|] |>Array.append neighbourArray
+                    neighbourArray<-numberArray
             
         | "line" -> 
                 if id=1 then
@@ -135,7 +163,16 @@ let rec getNeighbours (id: int) (topology: string) (nodeCount: int) : int [] =
                 else
                     neighbourArray<- [|id+1|] |>Array.append neighbourArray
                     neighbourArray<- [|id-1|] |>Array.append neighbourArray
-        | "3d" ->()
+        | "3d" ->
+                let left=getAdjustedNeighbour (id-1)
+                // printfn "%d" left
+                let right=getAdjustedNeighbour (id+1)
+                let top=getAdjustedNeighbour (id+dimension)
+                let down=getAdjustedNeighbour (id-dimension)
+                let front=getAdjustedNeighbour (id+dimension*dimension)
+                let back=getAdjustedNeighbour (id-dimension*dimension)
+                printfn "id %d left %d right %d top %d down %d front %d back %d " id left right top down front back
+                neighbourArray<-[|left;right;top;down;front;back|]|> Array.append neighbourArray
         | "imp3d" ->
                 neighbourArray<- getNeighbours id "3d" nodeCount |> Array.append neighbourArray
                 let mutable randNode = System.Random().Next(1, nodeCount+1)
@@ -147,16 +184,11 @@ let rec getNeighbours (id: int) (topology: string) (nodeCount: int) : int [] =
         | _ ->printfn "Wrong Topology is provided as input, Please pass either of these- full, line, 3d, imp3d"
     neighbourArray
 
-//--------program start
-let nodeArrayOfActors = Array.zeroCreate (nodeCount+1)
-
-let nodeList = [ 1 .. nodeCount]
 
 for i in nodeList do
-    let neighbours = getNeighbours i topology nodeCount// Make sure neighbours is iterated from 0
+    let neighbours = getNeighbours i topology existingNodeSet// Make sure neighbours is iterated from 0
     nodeArrayOfActors.[i] <- system.ActorOf(Props.Create(typeof<Node>, neighbours, i), "demo" + string (i))
     //Make sure nodeArrayOfActors is iterated from 1
-    
 
 let trackerRef = system.ActorOf(Props.Create(typeof<Tracker>, nodeArrayOfActors,topology,protocol), "tracker")
 
