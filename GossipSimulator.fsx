@@ -1,12 +1,17 @@
 #r "nuget: Akka, 1.4.25"
 #r "nuget: Akka.FSharp"
 #r "nuget: Akka.Remote"
-
+// #r "FSharp.Collections.ParallelSeq.dll"
+// open FSharp.Collections.ParallelSeq
 open System
 open Akka.Actor
 open Akka.FSharp
+open System.Threading
+open System.Threading.Tasks
+open System.Collections.Concurrent
 
 let clock = Diagnostics.Stopwatch()
+let clock1 = Diagnostics.Stopwatch()
 
 type ActionType =
     | SetUp of IActorRef []*string*string
@@ -31,8 +36,6 @@ if topology="3d" || topology="imp3d" then
 else
     existingNodeSet<-nodeCounter
 
-printfn "nodes %d" dimension
-
 let system = ActorSystem.Create("System")
 
 let getRandArrElement =
@@ -55,19 +58,33 @@ let getAdjustedNeighbour =
                       
 type Tracker(nodes: IActorRef [], topology: string, protocol: string) =
     inherit Actor()
-
     override x.OnReceive(msg) =
         match msg :?> ActionType with
         | Start -> 
                 for i in 1..nodes.Length-1 do
                     nodes.[i] <! SetUp(nodes,topology,protocol)
                 let randNode = System.Random().Next(1, existingNodeSet+1)
-                printfn "Start RadnodeVal %d" randNode
+                printfn "Starting RadnodeVal %d" randNode         
                 if protocol="gossip" then
                     clock.Start()
+                    let rec loop () = async {
+                            do! Async.Sleep 200
+                            let node = System.Random().Next(1, existingNodeSet+1)
+                            printfn "InSide Loop RadnodeVal %d" node
+                            nodes.[randNode]<! Gossip("I have a gossip")
+                            return! loop () }
+                    Async.Start (loop ())
+                    printfn "Inside gossip rand %d" randNode         
                     nodes.[randNode]<! Gossip("I have a gossip")
                 elif protocol="push-sum" then
                     clock.Start()
+                    let rec loop () = async {
+                            do! Async.Sleep 200
+                            let node = System.Random().Next(1, existingNodeSet+1)
+                            printfn "InSide Loop RadnodeVal %d" node
+                            nodes.[randNode]<! PushSum
+                            return! loop () }
+                    Async.Start (loop ())
                     printfn "RandNode at start %d " randNode 
                     nodes.[randNode]<!PushSum
         | Terminate (proto,sum,weight)->
@@ -185,14 +202,20 @@ let rec getNeighbours (id: int) (topology: string) (nodeCount: int) : int [] =
         | _ ->printfn "Wrong Topology is provided as input, Please pass either of these- full, line, 3d, imp3d"
     neighbourArray
 
-
+clock1.Start
 for i in nodeList do
     let neighbours = getNeighbours i topology existingNodeSet// Make sure neighbours is iterated from 0
     nodeArrayOfActors.[i] <- system.ActorOf(Props.Create(typeof<Node>, neighbours, i), "demo" + string (i))
     //Make sure nodeArrayOfActors is iterated from 1
+// Parallel.ForEach(nodeList, fun i -> 
+//                             let neighbours = getNeighbours i topology existingNodeSet// Make sure neighbours is iterated from 0
+//                             nodeArrayOfActors.[i] <-system.ActorOf(Props.Create(typeof<Node>, neighbours, i), "demo" + string (i))
+//                             ) |> ignore
+clock1.Stop
+printfn "Initialized actors in %O" clock1.Elapsed  
 
 let trackerRef = system.ActorOf(Props.Create(typeof<Tracker>, nodeArrayOfActors,topology,protocol), "tracker")
-
+        
 
 trackerRef<! Start
 
