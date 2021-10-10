@@ -71,7 +71,7 @@ type Tracker(nodes: IActorRef [], topology: string, protocol: string) =
                             do! Async.Sleep 200
                             let node = System.Random().Next(1, existingNodeSet+1)
                             printfn "InSide Loop RadnodeVal %d" node
-                            nodes.[randNode]<! Gossip("I have a gossip")
+                            nodes.[node]<! Gossip("I have a gossip")
                             return! loop () }
                     Async.Start (loop ())
                     printfn "Inside gossip rand %d" randNode         
@@ -82,7 +82,7 @@ type Tracker(nodes: IActorRef [], topology: string, protocol: string) =
                             do! Async.Sleep 200
                             let node = System.Random().Next(1, existingNodeSet+1)
                             printfn "InSide Loop RadnodeVal %d" node
-                            nodes.[randNode]<! PushSum
+                            nodes.[node]<! PushSum
                             return! loop () }
                     Async.Start (loop ())
                     printfn "RandNode at start %d " randNode 
@@ -119,8 +119,6 @@ type Node(neighbours: int [], nodeNum: int) =
             
         | Gossip rumor -> 
             // printfn "val i %d" nodeNum 
-           
-          
                 let randNode = getRandArrElement neighboursForMe
                 // printfn "val i %d and rumorCount %d and randNode %d network size %d" nodeNum rumorCount randNode network.Length
                 rumorCount<-rumorCount+1

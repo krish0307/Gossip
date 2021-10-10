@@ -34,8 +34,6 @@ if topology="3d" || topology="imp3d" then
 else
     existingNodeSet<-nodeCounter
 
-printfn "nodes %d" dimension
-
 let system = ActorSystem.Create("System")
 
 let getRandArrElement =
@@ -54,7 +52,6 @@ let getAdjustedNeighbour =
         newNum
 
 // let num=getAdjustedNeighbour 0                      
-// printfn "%d" num 
                       
 type Tracker(nodes: IActorRef [], topology: string, protocol: string) =
     inherit Actor()
@@ -65,17 +62,29 @@ type Tracker(nodes: IActorRef [], topology: string, protocol: string) =
                 for i in 1..nodes.Length-1 do
                     nodes.[i] <! SetUp(nodes,topology,protocol)
                 let randNode = System.Random().Next(1, existingNodeSet+1)
-
-                printfn "Start RadnodeVal %d" randNode
+                //printfn "Starting RadnodeVal %d" randNode         
                 if protocol="gossip" then
                     clock.Start()
+                    let rec loop () = async {
+                            do! Async.Sleep 200
+                            let node = System.Random().Next(1, existingNodeSet+1)
+                            nodes.[node]<! Gossip("I have a gossip")
+                            return! loop () }
+                    Async.Start (loop ())
+                    //printfn "Inside gossip rand %d" randNode         
                     nodes.[randNode]<! Gossip("I have a gossip")
                 elif protocol="push-sum" then
                     clock.Start()
-                    printfn "RandNode at start %d " randNode 
+                    let rec loop () = async {
+                            do! Async.Sleep 200
+                            let node = System.Random().Next(1, existingNodeSet+1)
+                            nodes.[node]<! PushSum
+                            return! loop () }
+                    Async.Start (loop ())
                     nodes.[randNode]<!PushSum
         | Terminate (proto,sum,weight)->
             convergedNodeCount <- convergedNodeCount+1
+            //printfn "convergent node count %d node %s" convergedNodeCount x.Sender.Path.Name
             if convergedNodeCount = (existingNodeSet-failureNodes) then
                 clock.Stop()
                 printfn "Time taken for convergence: %O" clock.Elapsed
@@ -83,13 +92,10 @@ type Tracker(nodes: IActorRef [], topology: string, protocol: string) =
                     printfn "For Push-sum:- Sum is %f, Weight is %f, and SumEstimate %.10f" sum weight (sum/weight)
                 Environment.Exit(0)
             //TODO:kill logic
-        | NodeFailed msg -> 
-            printfn "%s %s" msg x.Sender.Path.Name
-            // printfn "Converged %i nodes" numberOfConvergedNodes
         | _ ->()
 
 
-type Node(creator: IActorRef, neighbours: int [], nodeId: int) =
+type Node(neighbours: int [], nodeId: int) =
     inherit Actor()
     let neighboursForMe=neighbours
     let mutable network : IActorRef [] =[||]
@@ -105,44 +111,48 @@ type Node(creator: IActorRef, neighbours: int [], nodeId: int) =
         match msg :?> ActionType with
         | FailNode boolVal -> 
             shouldFail <- boolVal
-            printfn " fail node %d" nodeId
         | SetUp (nodes: IActorRef [],topology:string,protocol:string)->
-            // printfn "INside"
             network<-nodes
             topo<-topology
             proto<-protocol
             tracker<- x.Sender
             
         | Gossip rumor -> 
-                let randNode = getRandArrElement neighboursForMe
-                // printfn "val i %d and rumorCount %d and randNode %d network size %d" nodeNum rumorCount randNode network.Length
-                if rumorCount = 2 && shouldFail then
-                    tracker <! NodeFailed("Failed")
-                else if rumorCount>=10 then
-                    printfn "Calling terminate %d" nodeId
-                    tracker<! Terminate("gossip",0.,0.)
-                else
-                    rumorCount<-rumorCount+1
-                    network.[randNode]<! Gossip(rumor)
-        | PushSum  ->
-            // let randNode = System.Random().Next(0, neighboursForMe.Length)
-          
-            let randNode = getRandArrElement neighboursForMe
 
-            if rumorCount = 2 && shouldFail then
-                tracker <! NodeFailed("Failed")
-            else
+                //printfn "nodeiD: %d rumorCount: %d" nodeId rumorCount
+                let randNode = getRandArrElement neighboursForMe
+                if rumorCount < 10 then
+                    //printfn "entered if %d" rumorCount
+                    if not shouldFail then
+                        rumorCount <- rumorCount+1
+                        network.[randNode]<! Gossip(rumor)
+                     else
+                        if rumorCount < 2 then
+                            rumorCount <- rumorCount+1
+                            network.[randNode]<! Gossip(rumor)
+                        //else
+                            //printfn "node %d failed rumorCount %d" nodeId rumorCount
+                else
+                    //printfn "Calling terminate %d %d" nodeId rumorCount
+                    tracker<! Terminate("gossip",0.,0.)
+
+        | PushSum  ->
+         
+            let randNode = getRandArrElement neighboursForMe
+            //printf "%d random node selected: " randNode
+              //// just using this variable for count purposes
+            //printfn "nodeiD: %d rumorCount: %d" nodeId rumorCount         
+            if not shouldFail || rumorCount < 2 then
                 sum<-sum/2.0
+                rumorCount <- rumorCount+1
                 weight<-weight/2.0
-                rumorCount<-rumorCount+1
                 network.[randNode]<! CalculatePS(sum, weight)
+         
+                
         | CalculatePS (s:Double,w:Double)->
             let newSum=sum+s
             let newWeight=weight+w
             let ratioDiff=sum/weight-newSum/newWeight |> abs
-            // printfn "val i %f " newWeight 
-            // printfn "val i %f " ratioDiff 
-
             if ratioDiff<diff then
                 epochCounter<-epochCounter+1
             else 
@@ -153,6 +163,7 @@ type Node(creator: IActorRef, neighbours: int [], nodeId: int) =
                 let index =getRandArrElement neighboursForMe
                 network.[index]<! CalculatePS (sum,weight)
             else
+                //printfn "calling terminate on nodeId %d with sum %f and weight %f" nodeId sum weight
                 tracker<! Terminate ("push-sum",sum,weight)
 
         | _ -> ()
@@ -183,13 +194,11 @@ let rec getNeighbours (id: int) (topology: string) (nodeCount: int) : int [] =
                     neighbourArray<- [|id-1|] |>Array.append neighbourArray
         | "3d" ->
                 let left=getAdjustedNeighbour (id-1)
-                // printfn "%d" left
                 let right=getAdjustedNeighbour (id+1)
                 let top=getAdjustedNeighbour (id+dimension)
                 let down=getAdjustedNeighbour (id-dimension)
                 let front=getAdjustedNeighbour (id+dimension*dimension)
                 let back=getAdjustedNeighbour (id-dimension*dimension)
-                // printfn "id %d left %d right %d top %d down %d front %d back %d " id left right top down front back
                 neighbourArray<-[|left;right;top;down;front;back|]|> Array.append neighbourArray
         | "imp3d" ->
                 neighbourArray<- getNeighbours id "3d" nodeCount |> Array.append neighbourArray
@@ -207,7 +216,7 @@ let trackerRef = system.ActorOf(Props.Create(typeof<Tracker>, nodeArrayOfActors,
 
 for i in nodeList do
     let neighbours = getNeighbours i topology existingNodeSet// Make sure neighbours is iterated from 0
-    nodeArrayOfActors.[i] <- system.ActorOf(Props.Create(typeof<Node>, trackerRef, neighbours, i), "demo" + string (i))
+    nodeArrayOfActors.[i] <- system.ActorOf(Props.Create(typeof<Node>, neighbours, i), "demo" + string (i))
     //Make sure nodeArrayOfActors is iterated from 1
 
 for f in [1..failureNodes] do
