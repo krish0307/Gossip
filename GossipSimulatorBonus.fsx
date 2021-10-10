@@ -76,7 +76,7 @@ type Tracker(nodes: IActorRef [], topology: string, protocol: string) =
                     nodes.[randNode]<!PushSum
         | Terminate (proto,sum,weight)->
             convergedNodeCount <- convergedNodeCount+1
-            if convergedNodeCount = (nodeCounter-failureNodes) then
+            if convergedNodeCount = (existingNodeSet-failureNodes) then
                 clock.Stop()
                 printfn "Time taken for convergence: %O" clock.Elapsed
                 if proto="push-sum" then       
@@ -105,6 +105,7 @@ type Node(creator: IActorRef, neighbours: int [], nodeId: int) =
         match msg :?> ActionType with
         | FailNode boolVal -> 
             shouldFail <- boolVal
+            printfn " fail node %d" nodeId
         | SetUp (nodes: IActorRef [],topology:string,protocol:string)->
             // printfn "INside"
             network<-nodes
@@ -116,7 +117,7 @@ type Node(creator: IActorRef, neighbours: int [], nodeId: int) =
                 let randNode = getRandArrElement neighboursForMe
                 // printfn "val i %d and rumorCount %d and randNode %d network size %d" nodeNum rumorCount randNode network.Length
                 if rumorCount = 2 && shouldFail then
-                    creator <! NodeFailed("Failed")
+                    tracker <! NodeFailed("Failed")
                 else if rumorCount>=10 then
                     printfn "Calling terminate %d" nodeId
                     tracker<! Terminate("gossip",0.,0.)
@@ -129,7 +130,7 @@ type Node(creator: IActorRef, neighbours: int [], nodeId: int) =
             let randNode = getRandArrElement neighboursForMe
 
             if rumorCount = 2 && shouldFail then
-                creator <! NodeFailed("Failed")
+                tracker <! NodeFailed("Failed")
             else
                 sum<-sum/2.0
                 weight<-weight/2.0
@@ -210,7 +211,7 @@ for i in nodeList do
     //Make sure nodeArrayOfActors is iterated from 1
 
 for f in [1..failureNodes] do
-    let fnode = System.Random().Next(0, failureNodes)
+    let fnode = System.Random().Next(1, existingNodeSet+1)
     nodeArrayOfActors.[fnode] <! FailNode true
 
 trackerRef<! Start
