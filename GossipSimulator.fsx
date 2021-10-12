@@ -1,21 +1,16 @@
 #r "nuget: Akka, 1.4.25"
 #r "nuget: Akka.FSharp"
 #r "nuget: Akka.Remote"
-// #r "FSharp.Collections.ParallelSeq.dll"
-// open FSharp.Collections.ParallelSeq
+
 open System
 open Akka.Actor
 open Akka.FSharp
-open System.Threading
-open System.Threading.Tasks
-open System.Collections.Concurrent
 
 let clock = Diagnostics.Stopwatch()
 let clock1 = Diagnostics.Stopwatch()
 
 type ActionType =
     | SetUp of IActorRef []*string*string
-    // | IntializeAll of IActorRef []
     | Gossip of String
     | Start
     | RumorCount of String
@@ -27,7 +22,7 @@ type ActionType =
 let nodeCounter = int (fsi.CommandLineArgs.[1])
 let topology = string (fsi.CommandLineArgs.GetValue 2)
 let protocol = string (fsi.CommandLineArgs.GetValue 3)
-
+let mutable convergedNodeCount = 0
 let diff= 10.0 ** -10.0
 let dimension=int(floor((float nodeCounter) ** (1.0/3.0)))
 let mutable existingNodeSet=nodeCounter
@@ -53,8 +48,6 @@ let getAdjustedNeighbour =
             newNum<-id
         newNum
 
-// let num=getAdjustedNeighbour 0                      
-// printfn "%d" num 
                       
 type Tracker(nodes: IActorRef [], topology: string, protocol: string) =
     inherit Actor()
@@ -66,34 +59,19 @@ type Tracker(nodes: IActorRef [], topology: string, protocol: string) =
                 let randNode = System.Random().Next(1, existingNodeSet+1)
                 printfn "Starting RadnodeVal %d" randNode         
                 if protocol="gossip" then
-                    clock.Start()
-                    let rec loop () = async {
-                            do! Async.Sleep 200
-                            let node = System.Random().Next(1, existingNodeSet+1)
-                            printfn "InSide Loop RadnodeVal %d" node
-                            nodes.[node]<! Gossip("I have a gossip")
-                            return! loop () }
-                    Async.Start (loop ())
-                    printfn "Inside gossip rand %d" randNode         
+                    clock.Start()      
                     nodes.[randNode]<! Gossip("I have a gossip")
                 elif protocol="push-sum" then
                     clock.Start()
-                    let rec loop () = async {
-                            do! Async.Sleep 200
-                            let node = System.Random().Next(1, existingNodeSet+1)
-                            printfn "InSide Loop RadnodeVal %d" node
-                            nodes.[node]<! PushSum
-                            return! loop () }
-                    Async.Start (loop ())
-                    printfn "RandNode at start %d " randNode 
                     nodes.[randNode]<!PushSum
         | Terminate (proto,sum,weight)->
-            clock.Stop()
-            printfn "Time taken for convergence: %O" clock.Elapsed
-            if proto="push-sum" then       
-                printfn "For Push-sum:- Sum is %f, Weight is %f, and SumEstimate %.10f" sum weight (sum/weight)
-            Environment.Exit(0)
-            //TODO:kill logic
+            convergedNodeCount <- convergedNodeCount+1
+            if convergedNodeCount = (existingNodeSet) then
+                clock.Stop()
+                printfn "Time taken for convergence: %O" clock.Elapsed
+                if proto="push-sum" then       
+                    printfn "For Push-sum:- Sum is %f, Weight is %f, and SumEstimate %.10f" sum weight (sum/weight)
+                Environment.Exit(0)
         | _ ->()
 
 
@@ -111,16 +89,13 @@ type Node(neighbours: int [], nodeNum: int) =
     override x.OnReceive(msg) =
         match msg :?> ActionType with
         | SetUp (nodes: IActorRef [],topology:string,protocol:string)->
-            // printfn "INside"
             network<-nodes
             topo<-topology
             proto<-protocol
             tracker<- x.Sender
             
         | Gossip rumor -> 
-            // printfn "val i %d" nodeNum 
                 let randNode = getRandArrElement neighboursForMe
-                // printfn "val i %d and rumorCount %d and randNode %d network size %d" nodeNum rumorCount randNode network.Length
                 rumorCount<-rumorCount+1
                 if rumorCount>=10 then
                     printfn "Calling terminate %d" nodeNum
@@ -128,9 +103,7 @@ type Node(neighbours: int [], nodeNum: int) =
                 else
                     network.[randNode]<! Gossip(rumor)
         | PushSum  ->
-            // let randNode = System.Random().Next(0, neighboursForMe.Length)
             let randNode = getRandArrElement neighboursForMe
-            // printfn "val i %d " nodeNum 
             sum<-sum/2.0
             weight<-weight/2.0
             network.[randNode]<! CalculatePS(sum, weight)
@@ -138,9 +111,6 @@ type Node(neighbours: int [], nodeNum: int) =
             let newSum=sum+s
             let newWeight=weight+w
             let ratioDiff=sum/weight-newSum/newWeight |> abs
-            // printfn "val i %f " newWeight 
-            // printfn "val i %f " ratioDiff 
-
             if ratioDiff<diff then
                 epochCounter<-epochCounter+1
             else 
@@ -159,7 +129,7 @@ type Node(neighbours: int [], nodeNum: int) =
 
 let nodeArrayOfActors = Array.zeroCreate (existingNodeSet+1)
 let nodeList = [ 1 .. existingNodeSet]
-let mutable numberArray: int [] = [||]//TODO:see if list to array conversion possible
+let mutable numberArray: int [] = [||]
 for i in 1 ..existingNodeSet do
    numberArray<-[|i|] |>Array.append numberArray
 
@@ -181,13 +151,11 @@ let rec getNeighbours (id: int) (topology: string) (nodeCount: int) : int [] =
                     neighbourArray<- [|id-1|] |>Array.append neighbourArray
         | "3d" ->
                 let left=getAdjustedNeighbour (id-1)
-                // printfn "%d" left
                 let right=getAdjustedNeighbour (id+1)
                 let top=getAdjustedNeighbour (id+dimension)
                 let down=getAdjustedNeighbour (id-dimension)
                 let front=getAdjustedNeighbour (id+dimension*dimension)
                 let back=getAdjustedNeighbour (id-dimension*dimension)
-                // printfn "id %d left %d right %d top %d down %d front %d back %d " id left right top down front back
                 neighbourArray<-[|left;right;top;down;front;back|]|> Array.append neighbourArray
         | "imp3d" ->
                 neighbourArray<- getNeighbours id "3d" nodeCount |> Array.append neighbourArray
